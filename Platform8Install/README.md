@@ -1,7 +1,7 @@
 # Platform 8 Installation Suite
 
-**Author:** Pathan Imran Khan
-**Last Updated:** October 2026
+**Author:** PATHAN IMRAN KHAN
+**Last Updated:** OCTOBER 2026
 
 ## Overview
 

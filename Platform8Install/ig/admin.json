@@ -1,0 +1,52 @@
+{
+    "heap": [
+        {
+            "name": "TlsConf",
+            "type": "ServerTlsOptions",
+            "config": {
+                "keyManager": {
+                    "type": "SecretsKeyManager",
+                    "config": {
+                        "signingSecretId": "key.manager.secret.id",
+                        "secretsProvider": "ServerIdentityStore"
+                    }
+                }
+            }
+        },
+        {
+            "name": "SecretsPasswords",
+            "type": "FileSystemSecretStore",
+            "config": {
+                "directory": "{{IG_KEY_DIR}}/",
+                "format": "PLAIN"
+            }
+        },
+        {
+            "name": "ServerIdentityStore",
+            "type": "KeyStoreSecretStore",
+            "config": {
+                "file": "{{IG_KEYSTORE_FILE}}",
+                "storePasswordSecretId": "keystore.pin",
+                "secretsProvider": "SecretsPasswords",
+                "mappings": [
+                    {
+                        "secretId": "key.manager.secret.id",
+                        "aliases": [
+                            "ssl-key-pair"
+                        ]
+                    }
+                ]
+            }
+        }
+    ],
+    "connectors": [
+        {
+            "port": "{{IG_HTTP_PORT}}"
+        },
+        {
+            "port": "{{IG_HTTPS_PORT}}",
+            "tls": "TlsConf"
+        }
+    ],
+    "mode": "DEVELOPMENT"
+}

@@ -1,0 +1,21 @@
+{
+  "name": "am",
+  "baseURI": "http://{{AM_HOSTNAME}}:{{TOMCAT_HTTP_PORT}}",
+  "condition": "${find(request.uri.path, '(?:^/am(?!/XUI))')}",
+  "handler": {
+    "type": "Chain",
+    "config": {
+      "filters": [
+        {
+          "comment": "Always redirect to IG rather than AM",
+          "type": "LocationHeaderFilter",
+          "config": {
+            "baseURI": "https://{{PLATFORM_HOSTNAME}}:{{IG_HTTPS_PORT}}/"
+          }
+        }
+      ],
+      "capture": "all",
+      "handler": "ReverseProxyHandler"
+    }
+  }
+}

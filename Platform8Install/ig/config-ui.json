@@ -1,0 +1,33 @@
+{
+    "heap": [
+        {
+            "name": "capture",
+            "type": "CaptureDecorator",
+            "config": {
+            "captureEntity": true
+            }
+        },
+        {
+            "name": "DefaultRoute",
+            "type": "StaticResponseHandler",
+            "config": {
+                "status": 200,
+                "headers": {
+                    "Content-Type": [
+                        "text/html"
+                    ]
+                },
+                "entity": "<html><p><a href='/enduser-login/?realm=/alpha#/service/PlatformLogin'>End user access</a></p><p><a href='/platform-login/?realm=/#/'>Admin access</a></p></html>"
+            }
+        },
+        {
+            "type": "Router",
+            "name": "_router",
+            "config": {
+                "defaultHandler": "DefaultRoute"
+            }
+        }
+    ],
+    "handler": "_router",
+    "audit": "global"
+}

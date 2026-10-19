@@ -1,0 +1,67 @@
+<!--  tag::copyright[]  -->
+<!-- 
+  Copyright 2016-2025 Ping Identity Corporation. All Rights Reserved
+
+ ! This code is to be used exclusively in connection with Ping Identity
+ ! Corporation software or services. Ping Identity Corporation only offers
+ ! such software or services to legal entities who have entered into a
+ ! binding license agreement with Ping Identity Corporation.
+-->
+<!--  end::copyright[]  -->
+<configuration>  
+  <!-- Allow configuration of JUL loggers within this file without perf impact -->
+  <contextListener class="ch.qos.logback.classic.jul.LevelChangePropagator"/>
+
+  <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+    <withJansi>true</withJansi>
+    <encoder>
+      <pattern>
+        %nopex[%thread] %highlight(%-5level) %boldWhite(%logger{35})
+         @%mdc{routeId:-system} - 
+         %replace(%message){'([\r\n])(.)', '$1[CONTINUED]$2'}%n
+         %highlight(%replace(%rootException{short}){'(^|[\r\n])(.)', '$1[CONTINUED]$2'})
+      </pattern>
+    </encoder>
+  </appender>
+
+  <appender name="SIFT" class="ch.qos.logback.classic.sift.SiftingAppender">
+    <discriminator>
+      <key>routeId</key>
+      <defaultValue>system</defaultValue>
+    </discriminator>
+    <sift>
+      <appender name="FILE-${routeId}" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${instance.dir}/logs/route-${routeId}.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+          <fileNamePattern>
+            ${instance.dir}/logs/route-${routeId}-%d{yyyy-MM-dd}.%i.log
+          </fileNamePattern>
+          <maxFileSize>100MB</maxFileSize>
+          <maxHistory>30</maxHistory>
+          <totalSizeCap>3GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+          <pattern>
+            %nopex%date{"yyyy-MM-dd'T'HH:mm:ss,SSSXXX", UTC} | %-5level
+            | %thread | %logger{20} | @%mdc{routeId:-system}
+            | %replace(%message%n%xException){'([\r\n])(.)', '$1[CONTINUED]$2'}
+          </pattern>
+        </encoder>
+      </appender>
+    </sift>
+  </appender>
+
+  <!-- Disable noise from attached-exception filter -->
+  <logger name="org.forgerock.openig.filter.LogAttachedExceptionFilter" level="INHERITED"/>
+  
+  <!-- CaptureDecorator logs payloads at TRACE -->
+  <logger name="org.forgerock.openig.filter.capture.CaptureFilter" level="TRACE"/>
+
+  <!-- If you want *everything* at TRACE, you could also do:
+       <root level="TRACE"> … </root>
+       But DEBUG + the above TRACE for capture is usually enough -->
+  <root level="DEBUG">
+    <appender-ref ref="SIFT"/>
+    <appender-ref ref="STDOUT"/>
+  </root>
+</configuration>

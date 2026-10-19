@@ -1,0 +1,23 @@
+{
+    "name": "enduser-ui",
+    "condition": "${find(request.uri.path, '^/enduser-ui')}",
+    "baseURI": "http://{{AM_HOSTNAME}}:{{TOMCAT_HTTP_PORT}}",
+    "handler": {
+        "type": "Chain",
+        "config": {
+            "filters": [
+                {
+                    "type": "UriPathRewriteFilter",
+                    "config": {
+                        "mappings": {
+                            "/enduser-ui": "/enduser"
+                        },
+                        "failureHandler": "DefaultRoute"
+                    }
+                }
+            ],
+            "capture": "all",
+            "handler": "ReverseProxyHandler"
+        }
+    }
+}

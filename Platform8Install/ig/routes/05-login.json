@@ -1,0 +1,24 @@
+{
+    "name": "login",
+    "condition": "${find(request.uri.path, '^/enduser-login|^/platform-login')}",
+    "baseURI": "http://{{AM_HOSTNAME}}:{{TOMCAT_HTTP_PORT}}",
+    "handler": {
+        "type": "Chain",
+        "config": {
+            "filters": [
+                {
+                    "type": "UriPathRewriteFilter",
+                    "config": {
+                        "mappings": {
+                            "/enduser-login": "/am",
+                            "/platform-login": "/am"
+                        },
+                        "failureHandler": "DefaultRoute"
+                    }
+                }
+            ],
+            "capture": "all",
+            "handler": "ReverseProxyHandler"
+        }
+    }
+}

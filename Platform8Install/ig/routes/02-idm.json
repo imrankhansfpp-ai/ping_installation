@@ -1,0 +1,21 @@
+{
+    "name": "idm",
+    "baseURI": "http://{{IDM_HOSTNAME}}:{{IDM_HTTP_PORT}}",
+    "condition": "${find(request.uri.path, '(?:^/openidm)|(?:^/admin)|(?:^/upload)|(?:^/export)')}",
+    "handler": {
+        "type": "Chain",
+        "config": {
+            "filters": [
+                {
+                    "comment": "Always redirect to IG rather than IDM",
+                    "type": "LocationHeaderFilter",
+                    "config": {
+                        "baseURI": "https://{{PLATFORM_HOSTNAME}}:{{IG_HTTPS_PORT}}/"
+                    }
+                }
+            ],
+            "capture": "all",
+            "handler": "ReverseProxyHandler"
+        }
+    }
+}

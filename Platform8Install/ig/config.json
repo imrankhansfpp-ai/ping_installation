@@ -1,0 +1,38 @@
+{
+    "heap": [
+{
+        "name": "capture",
+        "type": "CaptureDecorator",
+        "config": {
+          "captureEntity": true
+        }
+      },
+      {
+        "name": "ReverseProxyHandler",
+        "type": "ReverseProxyHandler",
+        "capture": ["request", "response"]
+      },
+        {
+            "name": "DefaultRoute",
+            "type": "StaticResponseHandler",
+            "config": {
+                "status": 200,
+                "headers": {
+                    "Content-Type": [
+                        "text/html"
+                    ]
+                },
+                "entity": "<html><p><a href='/am'>Access Management</a></p><p><a href='/admin'>Identity Management</a></p></html>"
+            }
+        },
+        {
+            "type": "Router",
+            "name": "_router",
+            "config": {
+                "defaultHandler": "DefaultRoute"
+            }
+        }
+    ],
+    "handler": "_router",
+    "audit": "global"
+}

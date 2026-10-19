@@ -1,0 +1,19 @@
+# Software binaries — not tracked, populate locally before running the installer.
+# Pattern below matches the per-product subdirs while keeping any small text
+# files there (like admin.json) in version control.
+software/am/*.war
+software/am/*.zip
+software/am/amster/
+software/ds/*.zip
+software/idm/*.zip
+software/ig/*.zip
+software/ig/*.jar
+software/ui/*.zip
+software/ui/tmp/
+
+# OS files
+.DS_Store
+**/.DS_Store
+
+# Claude Code workspace
+.claude/

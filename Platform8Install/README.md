@@ -1,7 +1,7 @@
 # Platform 8 Installation Suite
 
-**Author:** Mark Nienaber
-**Last Updated:** May 2026
+**Author:** Pathan Imran Khan
+**Last Updated:** October 2026
 
 ## Overview
 

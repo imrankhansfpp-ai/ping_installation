@@ -246,13 +246,27 @@ function download_tomcat() {
     mkdir -p "$TEMP_DIR"
     cd "$TEMP_DIR"
     
-    if [[ -f "$TOMCAT_ARCHIVE" ]]; then
-        info "Tomcat archive already exists, skipping download"
+    # Check if archive exists AND is a valid gzip tar archive
+    if [[ -f "$TOMCAT_ARCHIVE" ]] && tar -tzf "$TOMCAT_ARCHIVE" >/dev/null 2>&1; then
+        info "Valid Tomcat archive already exists, skipping download"
     else
-        wget "$TOMCAT_URL" -O "$TOMCAT_ARCHIVE" || error "Failed to download Tomcat"
+        rm -f "$TOMCAT_ARCHIVE"
+        info "Fetching Tomcat from primary mirror: $TOMCAT_URL"
+        local archive_url="https://archive.apache.org/dist/tomcat/tomcat-10/v${TOMCAT_VERSION}/bin/apache-tomcat-${TOMCAT_VERSION}.tar.gz"
+        
+        if ! curl -fSL --connect-timeout 15 "$TOMCAT_URL" -o "$TOMCAT_ARCHIVE" 2>/dev/null; then
+            warning "Primary mirror failed or version archived. Trying Apache archive: $archive_url"
+            curl -fSL --connect-timeout 30 "$archive_url" -o "$TOMCAT_ARCHIVE" || wget "$archive_url" -O "$TOMCAT_ARCHIVE" || error "Failed to download Tomcat from all sources"
+        fi
+        
+        # Verify downloaded archive integrity
+        if ! tar -tzf "$TOMCAT_ARCHIVE" >/dev/null 2>&1; then
+            rm -f "$TOMCAT_ARCHIVE"
+            error "Downloaded Tomcat archive is corrupted or invalid"
+        fi
     fi
     
-    success "Tomcat download completed"
+    success "Tomcat download completed and verified"
 }
 
 function install_tomcat() {

@@ -8,10 +8,14 @@ set -euo pipefail
 #              improved, coloured logging and centralized configuration.
 ################################################################################
 
-# ==========================
-# Load environment variables
-# ==========================
-source ./platformconfig.env  # load TOMCAT_DIR, TOMCAT_WEBAPPS_DIR, AMSTER_DIR, etc.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/platformconfig.env" ]]; then
+    source "${SCRIPT_DIR}/platformconfig.env"
+elif [[ -f "${SCRIPT_DIR}/../platformconfig.env" ]]; then
+    source "${SCRIPT_DIR}/../platformconfig.env"
+else
+    source ./platformconfig.env
+fi
 
 # -----------------------------------------------------------------------------
 # Simple coloured-log functions
@@ -75,7 +79,8 @@ function clear_am() {
 function deploy_amfbc_envfile(){
     info "Deploying new AM setenv.sh..."
     # Substitute template variables with actual values
-    sed -e "s|{{AM_TRUSTSTORE}}|${AM_TRUSTSTORE}|g" \
+    sed -e "s|{{AM_HOSTNAME}}|${AM_HOSTNAME}|g" \
+        -e "s|{{AM_TRUSTSTORE}}|${AM_TRUSTSTORE}|g" \
         -e "s|{{TRUSTSTORE_PASSWORD}}|${TRUSTSTORE_PASSWORD}|g" \
         -e "s|{{DS_IDREPO_SERVER}}|${DS_IDREPO_SERVER}|g" \
         -e "s|{{DS_IDREPO_SERVER_LDAPS_PORT}}|${DS_IDREPO_SERVER_LDAPS_PORT}|g" \
@@ -88,6 +93,8 @@ function deploy_amfbc_envfile(){
         "${AM_FBC_ENV_FILE}" > "${AM_SETENV}" \
         && success "AM FBC setenv.sh file is deployed to ${AM_SETENV}" \
         || error "Failed to copy ${AM_FBC_ENV_FILE}"
+    chmod +x "${AM_SETENV}" 2>/dev/null || true
+    chown "${INSTALL_USER}:${INSTALL_USER}" "${AM_SETENV}" 2>/dev/null || true
 
     success "AM deployment delay complete."
 }
@@ -353,7 +360,11 @@ function run_amster_fbc_command() {
     
     # Ensure JAVA_HOME is set for Amster
     ensure_java_home || return 1
-    
+
+    # Pass truststore to Amster JVM
+    export JAVA_OPTS="${JAVA_OPTS:-} -Djavax.net.ssl.trustStore=${AM_TRUSTSTORE} -Djavax.net.ssl.trustStorePassword=${TRUSTSTORE_PASSWORD}"
+    export AMSTER_OPTS="${AMSTER_OPTS:-} -Djavax.net.ssl.trustStore=${AM_TRUSTSTORE} -Djavax.net.ssl.trustStorePassword=${TRUSTSTORE_PASSWORD}"
+
     # Create temporary log file
     local amster_log="/tmp/amster-fbc-output-$$.log"
     
@@ -474,7 +485,7 @@ function start_tomcat() {
     info "Waiting for Tomcat to be ready..."
     local count=0
     while [[ $count -lt 60 ]]; do
-        if netstat -tuln 2>/dev/null | grep -q ":${TOMCAT_HTTP_PORT} "; then
+        if (netstat -tuln 2>/dev/null || ss -tuln 2>/dev/null) | grep -q ":${TOMCAT_HTTP_PORT} "; then
             if curl -s -o /dev/null "http://localhost:${TOMCAT_HTTP_PORT}" 2>/dev/null; then
                 success "Tomcat is ready"
                 return 0

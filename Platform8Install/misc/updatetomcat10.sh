@@ -1,12 +1,30 @@
 #!/bin/bash
 
+# Determine script directory and load configuration
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/platformconfig.env" ]]; then
+    source "${SCRIPT_DIR}/platformconfig.env"
+elif [[ -f "${SCRIPT_DIR}/../platformconfig.env" ]]; then
+    source "${SCRIPT_DIR}/../platformconfig.env"
+fi
+
 # Variables
-TOMCAT_VERSION=10.1.41
-INSTALL_DIR=/opt/tomcat
+TOMCAT_VERSION="${TOMCAT_VERSION:-10.1.46}"
+INSTALL_DIR="${TOMCAT_DIR:-/opt/tomcat}"
 SERVICE_FILE=/etc/systemd/system/tomcat.service
-TARBALL_URL="https://downloads.apache.org/tomcat/tomcat-10/v${TOMCAT_VERSION}/bin/apache-tomcat-${TOMCAT_VERSION}.tar.gz"
-TOMCAT_USER=fradmin
-TOMCAT_GROUP=fradmin
+TOMCAT_USER="${INSTALL_USER:-fradmin}"
+TOMCAT_GROUP="${INSTALL_USER:-fradmin}"
+
+# Detect Java Home
+DETECTED_JAVA_HOME=""
+if [[ -n "${JAVA_HOME:-}" && -d "${JAVA_HOME}" ]]; then
+    DETECTED_JAVA_HOME="${JAVA_HOME}"
+elif command -v java >/dev/null 2>&1; then
+    JAVA_BIN="$(readlink -f "$(command -v java)")"
+    DETECTED_JAVA_HOME="$(dirname "$(dirname "${JAVA_BIN}")")"
+else
+    DETECTED_JAVA_HOME="/usr/lib/jvm/java-21-openjdk"
+fi
 
 echo "Stopping and disabling existing Tomcat service (if present)..."
 sudo systemctl stop tomcat || true
@@ -24,7 +42,13 @@ fi
 
 echo "Downloading Tomcat $TOMCAT_VERSION..."
 cd /tmp
-curl -O "$TARBALL_URL"
+TARBALL_URL="https://downloads.apache.org/tomcat/tomcat-10/v${TOMCAT_VERSION}/bin/apache-tomcat-${TOMCAT_VERSION}.tar.gz"
+ARCHIVE_URL="https://archive.apache.org/dist/tomcat/tomcat-10/v${TOMCAT_VERSION}/bin/apache-tomcat-${TOMCAT_VERSION}.tar.gz"
+
+if ! curl -fsSL -O "$TARBALL_URL"; then
+    echo "Primary download failed, attempting archive download..."
+    curl -fsSL -O "$ARCHIVE_URL" || { echo "Failed to download Tomcat $TOMCAT_VERSION"; exit 1; }
+fi
 
 echo "Installing Tomcat to $INSTALL_DIR..."
 sudo mkdir -p "$INSTALL_DIR"
@@ -46,7 +70,7 @@ Type=forking
 User=$TOMCAT_USER
 Group=$TOMCAT_GROUP
 
-Environment="JAVA_HOME=/usr/lib/jvm/java-21-openjdk"
+Environment="JAVA_HOME=$DETECTED_JAVA_HOME"
 Environment="CATALINA_PID=$INSTALL_DIR/temp/tomcat.pid"
 Environment="CATALINA_HOME=$INSTALL_DIR"
 Environment="CATALINA_BASE=$INSTALL_DIR"

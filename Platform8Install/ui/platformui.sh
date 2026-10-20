@@ -13,10 +13,14 @@
 
 set -euo pipefail
 
-# ==========================
-# Load environment variables
-# ==========================
-source ./platformconfig.env
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/platformconfig.env" ]]; then
+    source "${SCRIPT_DIR}/platformconfig.env"
+elif [[ -f "${SCRIPT_DIR}/../platformconfig.env" ]]; then
+    source "${SCRIPT_DIR}/../platformconfig.env"
+else
+    source ./platformconfig.env
+fi
 
 # -----------------------------------------------------------------------------
 # Simple coloured-log functions
@@ -101,6 +105,7 @@ function set_env_variables() {
 function run_variable_replacement() {
   cd "${TMP_UI}/PlatformUI"
   info "Running variable_replacement.sh…"
+  chmod +x ./variable_replacement.sh 2>/dev/null || true
   ./variable_replacement.sh \
       www/platform/js/*.js \
       www/enduser/js/*.js \
@@ -118,7 +123,9 @@ function install_ui_resources() {
   success "Platform & End-user UIs installed to ${WEBAPPS_DIR}"
 
   info "Replacing Login UI under am/XUI…"
+  mkdir -p "${SECURE_XUI_DIR}"
   cp -r "${TMP_UI}/PlatformUI/www/login/"* "${SECURE_XUI_DIR}/"
+  chown -R "${INSTALL_USER}:${INSTALL_USER}" "${WEBAPPS_DIR}" 2>/dev/null || true
   success "Login UI updated in am/XUI"
 }
 
@@ -179,7 +186,7 @@ function start_tomcat() {
 
   local retries=12
   for i in $(seq 1 $retries); do
-    if netstat -tuln | grep -q "${TOMCAT_HTTP_PORT}.*LISTEN"; then
+    if (netstat -tuln 2>/dev/null || ss -tuln 2>/dev/null) | grep -q ":${TOMCAT_HTTP_PORT} "; then
       success "Tomcat is listening on port ${TOMCAT_HTTP_PORT}."
       return 0
     else

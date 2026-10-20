@@ -6,16 +6,21 @@ set -euo pipefail
 # Description: Sets up Ping Identity IDM 8 using common environment variables.
 ################################################################################
 
-# ==========================
-# Load environment variables
-# ==========================
-source ./platformconfig.env  # load SOFTWARE_DIR, IDM_DIR, etc.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/platformconfig.env" ]]; then
+    source "${SCRIPT_DIR}/platformconfig.env"
+elif [[ -f "${SCRIPT_DIR}/../platformconfig.env" ]]; then
+    source "${SCRIPT_DIR}/../platformconfig.env"
+else
+    source ./platformconfig.env
+fi
 
 # -----------------------------------------------------------------------------
 # Simple coloured-log functions
 # -----------------------------------------------------------------------------
 function info()    { echo -e "\033[1;34m[INFO]\033[0m  $*"; }
 function success() { echo -e "\033[1;32m[✔]\033[0m     $*"; }
+function warning() { echo -e "\033[1;33m[⚠]\033[0m     $*"; }
 function error()   { echo -e "\033[1;31m[✖]\033[0m     $*"; }
 
 # ==========================
@@ -82,16 +87,33 @@ function configure_idm() {
     fi
 
     # Import DS cert into IDM truststore
-    info "Importing DS certificate into IDM truststore... from ${IDM_CERT_FILE}"
-    
-    if [ -f "${IDM_CERT_FILE}" ]; then
+    local cert_candidates=(
+        "${IDM_CERT_FILE}"
+        "${AM_TRUSTSTORE_FOLDER}/ds-ca-cert.pem"
+        "${SCRIPT_DIR}/misc/keys/ds-ca-cert.pem"
+        "${SCRIPT_DIR}/ds-ca-cert.pem"
+        "/tmp/ds-ca-cert.pem"
+    )
+    local found_cert=""
+    for candidate in "${cert_candidates[@]}"; do
+        if [[ -f "$candidate" ]]; then
+            found_cert="$candidate"
+            break
+        fi
+    done
+
+    if [[ -n "$found_cert" ]]; then
+        info "Importing DS certificate into IDM truststore from: $found_cert"
+        # Delete existing alias if present to prevent import errors on rerun
+        keytool -delete -alias ds-repo-ca-cert -keystore "${IDM_TRUSTSTORE}" -storepass:file "${IDM_STOREPASS_FILE}" 2>/dev/null || true
         keytool -importcert -noprompt \
             -alias ds-repo-ca-cert \
             -keystore "${IDM_TRUSTSTORE}" \
             -storepass:file "${IDM_STOREPASS_FILE}" \
-            -file "${IDM_CERT_FILE}" && success "Certificate imported into truststore" || error "Certificate import failed"
+            -file "$found_cert" && success "Certificate imported into truststore" || error "Certificate import failed"
     else
-        error "Certificate file not found: ${IDM_CERT_FILE}"
+        error "Certificate file not found in any expected location (checked ${IDM_CERT_FILE})"
+        exit 1
     fi
 
     # Update boot.properties
@@ -189,13 +211,36 @@ function start_idm() {
     export OPENIDM_OPTS="-Xms256m -Xmx512m -XX:+UseG1GC"
     info "Running startup.sh & with OPENIDM_OPTS=${OPENIDM_OPTS}"
     ./startup.sh &
-    sleep 20
+    local idm_pid=$!
+
+    info "Waiting for IDM to start listening on port ${BOOT_PORT_HTTP}..."
+    local count=0
+    local max_wait=75
+    local started=false
+    while [[ $count -lt $max_wait ]]; do
+        if (netstat -tuln 2>/dev/null || ss -tuln 2>/dev/null) | grep -q ":${BOOT_PORT_HTTP} "; then
+            started=true
+            success "IDM is listening on HTTP port ${BOOT_PORT_HTTP}"
+            break
+        fi
+        sleep 3
+        ((count+=3))
+        if [[ $((count % 15)) -eq 0 ]]; then
+            info "Waiting for IDM to initialize... (${count}/${max_wait}s)"
+        fi
+    done
+
     local logf="${IDM_LOGS_DIR}/openidm0.log"
     if [ -f "$logf" ]; then
-        info "Displaying last 50 lines of IDM log"
-        tail -n 50 "$logf"
+        info "Displaying last 30 lines of IDM log:"
+        tail -n 30 "$logf"
     fi
-    success "IDM startup initiated"
+
+    if [[ "$started" == "true" ]]; then
+        success "IDM startup completed successfully"
+    else
+        warning "IDM port ${BOOT_PORT_HTTP} not yet detected (may still be initializing) - continuing"
+    fi
 }
 
 # ========================

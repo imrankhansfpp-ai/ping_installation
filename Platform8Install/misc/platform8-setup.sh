@@ -8,8 +8,14 @@ set -euo pipefail
 # Usage: ./platform8-setup.sh
 ################################################################################
 
-# Load configuration (when run as misc/platform8-setup.sh from root directory)
-source ./platformconfig.env
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/platformconfig.env" ]]; then
+    source "${SCRIPT_DIR}/platformconfig.env"
+elif [[ -f "${SCRIPT_DIR}/../platformconfig.env" ]]; then
+    source "${SCRIPT_DIR}/../platformconfig.env"
+else
+    source ./platformconfig.env
+fi
 
 # Security: Disable bash history to prevent password exposure in command history
 set +H
@@ -41,34 +47,54 @@ function update_hosts_file() {
     # Backup original hosts file
     if [[ ! -f /etc/hosts.backup ]]; then
         sudo cp /etc/hosts /etc/hosts.backup
-        info "Created backup of original hosts file"
+        info "Created backup of original hosts file at /etc/hosts.backup"
     fi
     
-    # Define hosts entries
-    local hosts_entries=(
-        "127.0.0.1  am.example.com"
-        "127.0.0.1  openidm.example.com"
-        "127.0.0.1  idrepo1.example.com"
-        "127.0.0.1  amconfig1.example.com"
-        "127.0.0.1  cts1.example.com"
-        "127.0.0.1  platform.example.com"
-        "127.0.0.1  login.example.com"
-        "127.0.0.1  admin.example.com"
-        "127.0.0.1  enduser.example.com"
+    local s1_ip="${SERVER1_IP:-127.0.0.1}"
+    local s2_ip="${SERVER2_IP:-127.0.0.1}"
+
+    # Server 1 hostnames (DS, IDM, CTS, Config)
+    local server1_hosts=(
+        "${SERVER1_HOSTNAME:-ds1.example.com}"
+        "${DS_HOSTNAME:-ds1.example.com}"
+        "${IDM_HOSTNAME:-openidm.example.com}"
+        "openidm.example.com"
+        "idrepo1.example.com"
+        "amconfig1.example.com"
+        "cts1.example.com"
     )
-    
-    # Add entries if they don't already exist
-    for entry in "${hosts_entries[@]}"; do
-        local hostname=$(echo "$entry" | awk '{print $2}')
-        if ! grep -q "$hostname" /etc/hosts; then
-            echo "$entry" | sudo tee -a /etc/hosts > /dev/null
-            info "Added: $entry"
+
+    # Server 2 hostnames (AM, UI, IG Gateway)
+    local server2_hosts=(
+        "${SERVER2_HOSTNAME:-platform.example.com}"
+        "${AM_HOSTNAME:-am.example.com}"
+        "${PLATFORM_HOSTNAME:-platform.example.com}"
+        "${LOGIN_HOSTNAME:-login.example.com}"
+        "${ADMIN_HOSTNAME:-admin.example.com}"
+        "${ENDUSER_HOSTNAME:-enduser.example.com}"
+    )
+
+    # Add Server 1 entries
+    for host in "${server1_hosts[@]}"; do
+        if ! grep -qE "[[:space:]]${host}([[:space:]]|$)" /etc/hosts; then
+            echo "${s1_ip}  ${host}" | sudo tee -a /etc/hosts > /dev/null
+            info "Added: ${s1_ip}  ${host}"
         else
-            info "Host entry already exists: $hostname"
+            info "Host entry already exists: $host"
         fi
     done
-    
-    success "Hosts file updated successfully"
+
+    # Add Server 2 entries
+    for host in "${server2_hosts[@]}"; do
+        if ! grep -qE "[[:space:]]${host}([[:space:]]|$)" /etc/hosts; then
+            echo "${s2_ip}  ${host}" | sudo tee -a /etc/hosts > /dev/null
+            info "Added: ${s2_ip}  ${host}"
+        else
+            info "Host entry already exists: $host"
+        fi
+    done
+
+    success "Hosts file updated successfully (Server 1 IP: $s1_ip, Server 2 IP: $s2_ip)"
 }
 
 # -----------------------------------------------------------------------------
@@ -188,6 +214,20 @@ function create_platform_directories() {
     sudo mkdir -p "$IDM_DIR"
     sudo chown -R "$INSTALL_USER":"$INSTALL_USER" "$IDM_DIR"
     sudo chmod -R 755 "$IDM_DIR"
+
+    # Create AM keystores directory
+    sudo mkdir -p "${AM_TRUSTSTORE_FOLDER}"
+    sudo chown -R "$INSTALL_USER":"$INSTALL_USER" "${BASE_INSTALL_DIR}/${AM_CONTEXT}"
+    sudo chmod -R 755 "${BASE_INSTALL_DIR}/${AM_CONTEXT}"
+
+    # Create IG security directory
+    sudo mkdir -p "${IG_KEY_DIR}"
+    sudo chown -R "$INSTALL_USER":"$INSTALL_USER" "${IG_KEY_DIR}"
+    sudo chmod -R 755 "${IG_KEY_DIR}"
+
+    # Create project keys directory
+    sudo mkdir -p "${SCRIPT_DIR}/misc/keys"
+    sudo chown -R "$INSTALL_USER":"$INSTALL_USER" "${SCRIPT_DIR}/misc/keys"
     
     # Create logging directory with full permissions
     sudo mkdir -p "/var/log/platform8"
@@ -453,7 +493,8 @@ function install_prerequisites() {
             rsync \
             ca-certificates \
             gnupg \
-            software-properties-common
+            software-properties-common \
+            jq python3 python3-pip
     elif command -v dnf &> /dev/null; then
         info "Using dnf package manager (Fedora/RHEL 8+)"
         sudo dnf update -y
@@ -464,7 +505,8 @@ function install_prerequisites() {
             which findutils \
             policycoreutils-python-utils \
             firewalld \
-            rsync
+            rsync \
+            jq python3 python3-pip
     elif command -v yum &> /dev/null; then
         info "Using yum package manager (RHEL/CentOS 7)"
         sudo yum update -y
@@ -475,7 +517,8 @@ function install_prerequisites() {
             which findutils \
             policycoreutils-python-utils \
             firewalld \
-            rsync
+            rsync \
+            jq python3
     elif command -v zypper &> /dev/null; then
         info "Using zypper package manager (openSUSE/SLES)"
         sudo zypper refresh
@@ -485,7 +528,8 @@ function install_prerequisites() {
             openssl openssl-devel \
             which findutils \
             firewalld \
-            rsync
+            rsync \
+            jq python3
     elif command -v pacman &> /dev/null; then
         info "Using pacman package manager (Arch Linux)"
         sudo pacman -Syu --noconfirm
@@ -495,7 +539,8 @@ function install_prerequisites() {
             openssl \
             which findutils \
             firewalld \
-            rsync
+            rsync \
+            jq python
     else
         error "No supported package manager found (apt, dnf, yum, zypper, pacman)"
     fi
@@ -553,16 +598,14 @@ function run_platform_installation() {
     info "Starting Platform 8 installation as user: $INSTALL_USER..."
     
     # Check if the main platform installation script exists
-    local platform_install_script="./bin/install_platform8.sh"
+    local platform_install_script="./install_platform8.sh"
     if [[ ! -f "$platform_install_script" ]]; then
-        # Try alternative path if we're running from the bin directory
-        platform_install_script="../bin/install_platform8.sh"
+        platform_install_script="../install_platform8.sh"
         if [[ ! -f "$platform_install_script" ]]; then
-            platform_install_script="./install_platform8.sh"
+            platform_install_script="./bin/install_platform8.sh"
             if [[ ! -f "$platform_install_script" ]]; then
-                warning "Platform 8 installation script not found in expected locations"
-                info "Looked for: ./bin/install_platform8.sh, ../bin/install_platform8.sh, ./install_platform8.sh"
-                info "Skipping platform installation - run manually after setup completes"
+                warning "Platform 8 installation script not found (looked for ./install_platform8.sh)"
+                info "Skipping automated platform installation - run manually after setup completes"
                 return 0
             fi
         fi
@@ -581,8 +624,14 @@ function run_platform_installation() {
     sudo chmod +x "$platform_install_script"
     
     # Copy environment configuration to install user's home directory with secure permissions
-    sudo -u "$INSTALL_USER" cp "$current_dir/platformconfig.env" "/home/$INSTALL_USER/"
-    sudo -u "$INSTALL_USER" chmod 600 "/home/$INSTALL_USER/platformconfig.env"
+    local config_src="$current_dir/platformconfig.env"
+    if [[ ! -f "$config_src" && -f "${SCRIPT_DIR}/../platformconfig.env" ]]; then
+        config_src="${SCRIPT_DIR}/../platformconfig.env"
+    fi
+    if [[ -f "$config_src" ]]; then
+        sudo -u "$INSTALL_USER" cp "$config_src" "/home/$INSTALL_USER/" 2>/dev/null || true
+        sudo -u "$INSTALL_USER" chmod 600 "/home/$INSTALL_USER/platformconfig.env" 2>/dev/null || true
+    fi
     
     info "Switching to user $INSTALL_USER to run platform installation..."
     
@@ -693,8 +742,8 @@ function setup_prerequisites() {
     success "Operating System is now ready for Platform 8 installation!"
     echo ""
     info "🚀 NEXT STEP: Install Platform 8 components"
-    info "   Run the following command to install Platform 8:"
-    info "   ./bin/install_platform8.sh"
+    info "   Single Server:  ./install_platform8.sh"
+    info "   Multi-Server:   ./install_server1.sh (on Server 1) or ./install_server2.sh (on Server 2)"
     echo ""
     info "📊 System monitoring:"
     info "  - Check Tomcat status: sudo systemctl status tomcat"
@@ -787,7 +836,8 @@ function show_usage() {
     echo "  help          - Show this help message"
     echo ""
     echo "AFTER RUNNING THIS SCRIPT:"
-    echo "  Run './bin/install_platform8.sh' to install Platform 8 components"
+    echo "  Single-Server: Run './install_platform8.sh'"
+    echo "  Multi-Server:  Run './install_server1.sh' (Server 1) or './install_server2.sh' (Server 2)"
     echo ""
     echo "NOTE: This script creates the '$INSTALL_USER' user with admin privileges"
     echo "      for running the Platform 8 installation."

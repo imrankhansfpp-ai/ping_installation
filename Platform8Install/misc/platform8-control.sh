@@ -7,8 +7,18 @@ set -euo pipefail
 #              Handles start, stop, restart, status, and backup operations
 ################################################################################
 
-# Load configuration
-source ./platformconfig.env
+# Determine script directory and load configuration
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/platformconfig.env" ]]; then
+    source "${SCRIPT_DIR}/platformconfig.env"
+elif [[ -f "${SCRIPT_DIR}/../platformconfig.env" ]]; then
+    source "${SCRIPT_DIR}/../platformconfig.env"
+elif [[ -f "./platformconfig.env" ]]; then
+    source "./platformconfig.env"
+else
+    echo "ERROR: platformconfig.env not found!" >&2
+    exit 1
+fi
 
 # -----------------------------------------------------------------------------
 # Logging functions
@@ -237,7 +247,13 @@ function create_backup() {
 function install_tomcat() {
     info "Installing Tomcat 10 using platform8-setup.sh..."
     
-    local setup_script="./bin/platform8-setup.sh"
+    local setup_script="${SCRIPT_DIR}/platform8-setup.sh"
+    if [[ ! -f "$setup_script" ]]; then
+        setup_script="${SCRIPT_DIR}/../misc/platform8-setup.sh"
+    fi
+    if [[ ! -f "$setup_script" ]]; then
+        setup_script="./misc/platform8-setup.sh"
+    fi
     
     if [[ ! -f "$setup_script" ]]; then
         error "Setup script not found: $setup_script"

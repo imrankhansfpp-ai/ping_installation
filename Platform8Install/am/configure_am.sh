@@ -14,10 +14,14 @@ function success() { echo -e "\033[1;32m[✔]\033[0m     $*"; }
 function error()   { echo -e "\033[1;31m[✖]\033[0m     $*"; }
 
 
-# ==========================
-# Load environment variables
-# ==========================
-source ./platformconfig.env
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/platformconfig.env" ]]; then
+    source "${SCRIPT_DIR}/platformconfig.env"
+elif [[ -f "${SCRIPT_DIR}/../platformconfig.env" ]]; then
+    source "${SCRIPT_DIR}/../platformconfig.env"
+else
+    source ./platformconfig.env
+fi
 
 HOST="http://${AM_HOSTNAME}:${TOMCAT_HTTP_PORT}"
 ADMIN_TOKEN=""
@@ -38,14 +42,20 @@ info "Executing: AM - Amadmin login"
     -H "Content-Type: application/json" \
     -H "Accept-API-Version: resource=2.0, protocol=1" \
     -H "X-OpenAM-Username: amadmin" \
-    -H "X-OpenAM-Password: password" \
+    -H "X-OpenAM-Password: ${DEFAULT_PASSWORD}" \
     -d "{}")
 
   if [ "$STATUS" == "200" ] || [ "$STATUS" == "201" ]; then
 success "Success: HTTP $STATUS"
 
 
-    ADMIN_TOKEN=$(jq -r '.tokenId' "$RESPONSE_FILE")
+    if command -v jq >/dev/null 2>&1; then
+      ADMIN_TOKEN=$(jq -r '.tokenId' "$RESPONSE_FILE" 2>/dev/null || true)
+    elif command -v python3 >/dev/null 2>&1; then
+      ADMIN_TOKEN=$(python3 -c 'import sys,json; print(json.load(sys.stdin).get("tokenId",""))' < "$RESPONSE_FILE" 2>/dev/null || true)
+    else
+      ADMIN_TOKEN=$(grep -o '"tokenId":"[^"]*"' "$RESPONSE_FILE" | cut -d'"' -f4 || true)
+    fi
     if [ -z "$ADMIN_TOKEN" ]; then
 error "Error: Failed to get token from login response."
 

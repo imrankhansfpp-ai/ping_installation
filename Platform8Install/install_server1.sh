@@ -9,8 +9,13 @@ set -euo pipefail
 # Target Server RAM: 8 GB (Allocates 512MB heap per component)
 ################################################################################
 
-# Load central configuration
-source ./platformconfig.env
+# Determine script directory and load configuration
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/platformconfig.env" ]]; then
+    source "${SCRIPT_DIR}/platformconfig.env"
+else
+    source ./platformconfig.env
+fi
 
 # Logging utility functions
 function info()    { echo -e "\033[1;34m[INFO]\033[0m  $*"; }
@@ -48,8 +53,43 @@ function stop_idm_if_running() {
 }
 
 # -----------------------------------------------------------------------------
+# Function: preflight_checks
+# -----------------------------------------------------------------------------
+function preflight_checks() {
+    info "Running pre-flight checks for Server 1..."
+    local missing=0
+
+    local ds_zip
+    ds_zip=$(find "${DS_SOFTWARE_DIR}" -name "DS*.zip" -type f 2>/dev/null | head -n 1) || true
+    if [[ -z "$ds_zip" ]]; then
+        error "Missing Directory Services binary! Please place DS*.zip in: ${DS_SOFTWARE_DIR}/"
+        missing=1
+    else
+        success "Found DS package: $(basename "$ds_zip")"
+    fi
+
+    local idm_zip
+    idm_zip=$(find "${IDM_SOFTWARE_DIR}" -name "IDM*.zip" -type f 2>/dev/null | head -n 1) || true
+    if [[ -z "$idm_zip" ]]; then
+        error "Missing Identity Management binary! Please place IDM*.zip in: ${IDM_SOFTWARE_DIR}/"
+        missing=1
+    else
+        success "Found IDM package: $(basename "$idm_zip")"
+    fi
+
+    if [[ $missing -ne 0 ]]; then
+        error "Pre-flight checks failed. Please add the required software packages and rerun."
+        exit 1
+    fi
+    success "Pre-flight checks passed"
+    echo
+}
+
+# -----------------------------------------------------------------------------
 # STEP 1: Stop IDM if running
 # -----------------------------------------------------------------------------
+preflight_checks
+
 info "────────── 🔧 STEP 1: Stop IDM if running ──────────"
 stop_idm_if_running && success "✅ Step 1 complete: IDM stopped"
 echo
@@ -70,11 +110,11 @@ echo
 # STEP 3: Configure Disk Thresholds
 # -----------------------------------------------------------------------------
 info "────────── 💽 STEP 3: Configure Disk Thresholds for Dev ──────────"
-if [[ -x "./ds/configure_disk_thresholds.sh" ]]; then
-    ./ds/configure_disk_thresholds.sh || warning "Disk threshold configuration completed with warnings"
+if [[ -x "${SCRIPT_DIR}/ds/configure_disk_thresholds.sh" ]]; then
+    "${SCRIPT_DIR}/ds/configure_disk_thresholds.sh" || warning "Disk threshold configuration completed with warnings"
     success "✅ Step 3 complete: Disk thresholds configured"
 else
-    warning "Disk threshold script not found - skipping"
+    warning "Disk threshold script not found at ${SCRIPT_DIR}/ds/configure_disk_thresholds.sh - skipping"
 fi
 echo
 
@@ -99,7 +139,17 @@ info "================================================================="
 echo
 info "📌 NEXT STEPS TO COMPLETE PLATFORM 8 SETUP ON SERVER 2:"
 info "1. Copy the DS CA Certificate from this server to Server 2:"
-info "   scp ${AM_TRUSTSTORE_FOLDER}/ds-ca-cert.pem <user>@<server2-ip>:${AM_TRUSTSTORE_FOLDER}/ds-ca-cert.pem"
-info "2. On Server 2, ensure platformconfig.env has DS_HOSTNAME set to this server's IP/hostname."
-info "3. On Server 2, run: ./install_server2.sh"
+info "   Command option A (Recommended - copies directly into Server 2's repo):"
+info "     scp ./misc/keys/ds-ca-cert.pem <user>@<server2-ip>:/path/to/Platform8Install/misc/keys/"
+info "   Command option B (into AM keystores directory):"
+info "     scp ${AM_TRUSTSTORE_FOLDER}/ds-ca-cert.pem <user>@<server2-ip>:${AM_TRUSTSTORE_FOLDER}/ds-ca-cert.pem"
+echo
+info "2. On Server 2, verify platformconfig.env has:"
+info "     SERVER1_IP set to this server's IP address"
+info "     SERVER2_IP set to Server 2's IP address"
+info "     DS_HOSTNAME and IDM_HOSTNAME resolving to Server 1"
+echo
+info "3. On Server 2, run prerequisites setup then launch installer:"
+info "     ./misc/platform8-setup.sh"
+info "     ./install_server2.sh"
 echo

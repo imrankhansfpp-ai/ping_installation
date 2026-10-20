@@ -3,7 +3,7 @@
 
 CATALINA_OPTS="\
   -Dcom.sun.identity.sm.sms_object_filebased_enabled=true \
-  -Dam.server.fqdn=am.example.com \
+  -Dam.server.fqdn={{AM_HOSTNAME}} \
   -Dam.stores.user.servers={{DS_IDREPO_SERVER}}:{{DS_IDREPO_SERVER_LDAPS_PORT}} \
   -Dam.stores.user.username=uid=am-identity-bind-account,ou=admins,{{DS_IDREPO_DN}} \
   -Dam.stores.user.password={{DEFAULT_PASSWORD}} \

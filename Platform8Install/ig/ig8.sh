@@ -9,7 +9,14 @@ set -euo pipefail
 ################################################################################
 
 # Load environment variables
-source ./platformconfig.env
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/platformconfig.env" ]]; then
+    source "${SCRIPT_DIR}/platformconfig.env"
+elif [[ -f "${SCRIPT_DIR}/../platformconfig.env" ]]; then
+    source "${SCRIPT_DIR}/../platformconfig.env"
+else
+    source ./platformconfig.env
+fi
 
 # -----------------------------------------------------------------------------
 # Logging utility functions (consistent with other scripts)
@@ -38,6 +45,8 @@ info "Using IG ZIP file: $IG_ZIP"
 function clear_ig() {
     info "Removing previous IG security, installation, and config directories..."
     rm -rf "${IG_KEY_DIR}" "${IG_DIR}" "${IG_CFG_DIR}"
+    # Also clean any extracted gateway directory under BASE_INSTALL_DIR
+    find "${BASE_INSTALL_DIR}" -maxdepth 1 -type d \( -iname "*identity-gateway*" -o -iname "*ping-gateway*" -o -iname "*PingGateway*" \) -exec rm -rf {} + 2>/dev/null || true
     success "Removed IG directories: ${IG_KEY_DIR}, ${IG_DIR}, ${IG_CFG_DIR}"
 }
 
@@ -52,25 +61,51 @@ function prepare_keys() {
     chmod 600 "${IG_KEYSTORE_PIN_FILE}"
     success "Keystore PIN file created at ${IG_KEYSTORE_PIN_FILE}"
 
-    info "Generating TLS key pair"
-    "${DSKEYMGR}" create-tls-key-pair \
-        --deploymentId "${DS_DEPLOYMENT_ID}" \
-        --deploymentIdPassword "${DEFAULT_PASSWORD}" \
-        --keyStoreFile "${IG_KEYSTORE_FILE}" \
-        --keyStorePassword:file "${IG_KEYSTORE_PIN_FILE}" \
-        --hostname "${IG_HOSTNAME}" \
-        --subjectDn "CN=${IG_HOSTNAME},O=ForgeRock"
-    success "Keystore created at ${IG_KEYSTORE_FILE}"
+    if [[ -x "${DSKEYMGR:-}" ]]; then
+        info "Generating TLS key pair via dskeymgr..."
+        "${DSKEYMGR}" create-tls-key-pair \
+            --deploymentId "${DS_DEPLOYMENT_ID}" \
+            --deploymentIdPassword "${DEFAULT_PASSWORD}" \
+            --keyStoreFile "${IG_KEYSTORE_FILE}" \
+            --keyStorePassword:file "${IG_KEYSTORE_PIN_FILE}" \
+            --hostname "${IG_HOSTNAME}" \
+            --subjectDn "CN=${IG_HOSTNAME},O=ForgeRock"
+        success "Keystore created at ${IG_KEYSTORE_FILE}"
+
+        info "Exporting CA certificate via dskeymgr..."
+        "${DSKEYMGR}" export-ca-cert \
+            --deploymentId "${DS_DEPLOYMENT_ID}" \
+            --deploymentIdPassword "${DEFAULT_PASSWORD}" \
+            --outputFile "${IG_CA_CERT_FILE}"
+        success "CA certificate exported to ${IG_CA_CERT_FILE}"
+    else
+        info "dskeymgr not found on this host (Server 2 / Edge tier). Generating TLS key pair using keytool..."
+        rm -f "${IG_KEYSTORE_FILE}"
+        keytool -genkeypair \
+            -alias "ssl-key-pair" \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 365 \
+            -keystore "${IG_KEYSTORE_FILE}" \
+            -storepass "${DEFAULT_PASSWORD}" \
+            -keypass "${DEFAULT_PASSWORD}" \
+            -dname "CN=${IG_HOSTNAME},O=ForgeRock" \
+            -ext "SAN=dns:${IG_HOSTNAME},dns:localhost,ip:127.0.0.1" \
+            -noprompt
+        success "Keystore created at ${IG_KEYSTORE_FILE} using keytool (alias: ssl-key-pair)"
+
+        info "Exporting certificate using keytool..."
+        keytool -exportcert \
+            -alias "ssl-key-pair" \
+            -keystore "${IG_KEYSTORE_FILE}" \
+            -storepass "${DEFAULT_PASSWORD}" \
+            -rfc \
+            -file "${IG_CA_CERT_FILE}"
+        success "Certificate exported to ${IG_CA_CERT_FILE}"
+    fi
 
     info "Verifying keystore contents"
     keytool -list -keystore "${IG_KEYSTORE_FILE}" -storepass:file "${IG_KEYSTORE_PIN_FILE}"
-
-    info "Exporting CA certificate"
-    "${DSKEYMGR}" export-ca-cert \
-        --deploymentId "${DS_DEPLOYMENT_ID}" \
-        --deploymentIdPassword "${DEFAULT_PASSWORD}" \
-        --outputFile "${IG_CA_CERT_FILE}"
-    success "CA certificate exported to ${IG_CA_CERT_FILE}"
 }
 
 # -----------------------------------------------------------------------------
@@ -218,7 +253,9 @@ function start_ig() {
         fi
 
         # Check both HTTP and HTTPS ports (IG might bind HTTP first)
-        if netstat -tuln 2>/dev/null | grep -q ":${IG_HTTP_PORT} " || netstat -tuln 2>/dev/null | grep -q ":${IG_HTTPS_PORT} "; then
+        local net_output
+        net_output=$(netstat -tuln 2>/dev/null || ss -tuln 2>/dev/null || true)
+        if echo "$net_output" | grep -qE "(:${IG_HTTP_PORT} |:${IG_HTTPS_PORT} )"; then
             success "PingGateway ports are listening"
             # Give it another moment to fully initialize both ports
             sleep 2

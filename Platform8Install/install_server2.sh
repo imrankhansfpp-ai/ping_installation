@@ -12,8 +12,13 @@ set -euo pipefail
 # Target Server RAM: 8 GB (Allocates 512MB heap per component)
 ################################################################################
 
-# Load central configuration
-source ./platformconfig.env
+# Determine script directory and load configuration
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/platformconfig.env" ]]; then
+    source "${SCRIPT_DIR}/platformconfig.env"
+else
+    source ./platformconfig.env
+fi
 
 # Logging utility functions
 function info()    { echo -e "\033[1;34m[INFO]\033[0m  $*"; }
@@ -30,6 +35,81 @@ info "================================================================="
 echo
 
 # -----------------------------------------------------------------------------
+# Function: preflight_checks
+# -----------------------------------------------------------------------------
+function preflight_checks() {
+    info "Running pre-flight checks for Server 2..."
+    local missing=0
+
+    local am_war
+    am_war=$(find "${AM_SOFTWARE_DIR}" -name "AM*.war" -type f 2>/dev/null | head -n 1) || true
+    if [[ -z "$am_war" ]]; then
+        error "Missing AM WAR package! Please place AM*.war in: ${AM_SOFTWARE_DIR}/"
+        missing=1
+    else
+        success "Found AM package: $(basename "$am_war")"
+    fi
+
+    local amster_zip
+    amster_zip=$(find "${AMSTER_SOFTWARE_DIR}" -name "Amster-*.zip" -type f 2>/dev/null | head -n 1) || true
+    if [[ -z "$amster_zip" ]]; then
+        error "Missing Amster package! Please place Amster-*.zip in: ${AMSTER_SOFTWARE_DIR}/"
+        missing=1
+    else
+        success "Found Amster package: $(basename "$amster_zip")"
+    fi
+
+    local ig_zip
+    ig_zip=$(find "${IG_SOFTWARE_DIR}" -name "PingGateway*.zip" -type f 2>/dev/null | head -n 1) || true
+    if [[ -z "$ig_zip" ]]; then
+        error "Missing PingGateway package! Please place PingGateway*.zip in: ${IG_SOFTWARE_DIR}/"
+        missing=1
+    else
+        success "Found PingGateway package: $(basename "$ig_zip")"
+    fi
+
+    local ui_zip
+    ui_zip=$(find "${UI_SOFTWARE_DIR}" -name "PlatformUI*.zip" -type f 2>/dev/null | head -n 1) || true
+    if [[ -z "$ui_zip" ]]; then
+        error "Missing Platform UI package! Please place PlatformUI*.zip in: ${UI_SOFTWARE_DIR}/"
+        missing=1
+    else
+        success "Found Platform UI package: $(basename "$ui_zip")"
+    fi
+
+    if [[ $missing -ne 0 ]]; then
+        error "Pre-flight checks failed. Please place required binaries and rerun."
+        exit 1
+    fi
+    success "Pre-flight binary checks passed"
+    echo
+}
+
+# -----------------------------------------------------------------------------
+# Function: check_server1_connectivity
+# -----------------------------------------------------------------------------
+function check_server1_connectivity() {
+    info "Checking connectivity to Server 1 Directory Server at ${DS_HOSTNAME}:${DS_LDAPS_PORT}..."
+    if timeout 5 bash -c "</dev/tcp/${DS_HOSTNAME}/${DS_LDAPS_PORT}" 2>/dev/null; then
+        success "Server 1 DS is reachable on port ${DS_LDAPS_PORT} (LDAPS)"
+    else
+        warning "Could not connect to Server 1 DS at ${DS_HOSTNAME}:${DS_LDAPS_PORT}!"
+        warning "Please verify before continuing:"
+        warning "  1. Server 1 installation has finished and DS is active (./misc/platform8-control.sh status on Server 1)"
+        warning "  2. /etc/hosts on this server maps '${DS_HOSTNAME}' to Server 1's IP"
+        warning "  3. Firewall / Security Groups allow inbound traffic from Server 2 on port ${DS_LDAPS_PORT} and ${DS_ADMIN_CONNECTOR_PORT}"
+        echo
+        read -p "Do you want to proceed anyway? (y/N): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            error "Installation aborted by user"
+            exit 1
+        fi
+    fi
+    echo
+}
+
+# -----------------------------------------------------------------------------
 # Function: cleanup_am
 # -----------------------------------------------------------------------------
 function cleanup_am() {
@@ -42,28 +122,74 @@ function cleanup_am() {
 # Function: ensure_ds_cert_imported
 # -----------------------------------------------------------------------------
 function ensure_ds_cert_imported() {
-    info "Checking for Server 1 DS CA certificate in ${AM_TRUSTSTORE_FOLDER}..."
-    mkdir -p "${AM_TRUSTSTORE_FOLDER}"
-    if [[ ! -f "${AM_TRUSTSTORE}" ]]; then
-        info "Initializing truststore from system Java cacerts..."
-        local java_cacerts
-        java_cacerts="${jvm_cacerts:-$(dirname $(dirname $(readlink -f $(which javac))))/lib/security/cacerts}"
-        sudo cp "$java_cacerts" "${AM_TRUSTSTORE}"
-        sudo chown "${INSTALL_USER}:${INSTALL_USER}" "${AM_TRUSTSTORE}"
-        sudo chmod 644 "${AM_TRUSTSTORE}"
+    info "Resolving Server 1 DS CA certificate..."
+    sudo mkdir -p "${AM_TRUSTSTORE_FOLDER}"
+    sudo chown -R "${INSTALL_USER}:${INSTALL_USER}" "${BASE_INSTALL_DIR}/${AM_CONTEXT}" 2>/dev/null || true
+
+    local cert_candidates=(
+        "${AM_TRUSTSTORE_FOLDER}/ds-ca-cert.pem"
+        "${SCRIPT_DIR}/misc/keys/ds-ca-cert.pem"
+        "${SCRIPT_DIR}/ds-ca-cert.pem"
+        "/tmp/ds-ca-cert.pem"
+    )
+
+    local found_cert=""
+    for candidate in "${cert_candidates[@]}"; do
+        if [[ -f "$candidate" ]]; then
+            found_cert="$candidate"
+            break
+        fi
+    done
+
+    if [[ -z "$found_cert" ]]; then
+        error "================================================================="
+        error "❌ Server 1 DS CA Certificate (ds-ca-cert.pem) was NOT found!"
+        error "================================================================="
+        info "To fix this, run ONE of the following commands from Server 1:"
+        info "  scp ./misc/keys/ds-ca-cert.pem ${INSTALL_USER}@$(hostname -I 2>/dev/null | awk '{print $1}' || echo '<server2-ip>'):${SCRIPT_DIR}/misc/keys/"
+        info "  OR:"
+        info "  scp ${AM_TRUSTSTORE_FOLDER}/ds-ca-cert.pem ${INSTALL_USER}@$(hostname -I 2>/dev/null | awk '{print $1}' || echo '<server2-ip>'):${AM_TRUSTSTORE_FOLDER}/ds-ca-cert.pem"
+        echo
+        error "After copying the certificate, rerun ./install_server2.sh"
+        exit 1
     fi
 
-    local ds_cert="${AM_TRUSTSTORE_FOLDER}/ds-ca-cert.pem"
-    if [[ -f "$ds_cert" ]]; then
-        info "Importing ds-ca-cert.pem into AM truststore..."
-        keytool -importcert -file "$ds_cert" \
-            -keystore "${AM_TRUSTSTORE}" -storepass "${TRUSTSTORE_PASSWORD}" \
-            -alias "ds-ca-cert" -noprompt || true
-        success "DS CA cert registered in truststore"
-    else
-        warning "ds-ca-cert.pem not found in ${AM_TRUSTSTORE_FOLDER}!"
-        warning "Ensure you copied ds-ca-cert.pem from Server 1 so LDAPS trust succeeds."
+    info "Found DS CA certificate at: $found_cert"
+    if [[ "$found_cert" != "${AM_TRUSTSTORE_FOLDER}/ds-ca-cert.pem" ]]; then
+        cp -f "$found_cert" "${AM_TRUSTSTORE_FOLDER}/ds-ca-cert.pem"
+        success "Copied certificate to ${AM_TRUSTSTORE_FOLDER}/ds-ca-cert.pem"
     fi
+
+    if [[ ! -f "${AM_TRUSTSTORE}" ]]; then
+        info "Initializing truststore from system Java cacerts..."
+        local java_bin
+        java_bin=$(readlink -f "$(which java 2>/dev/null || which javac 2>/dev/null)" || true)
+        local detected_cacerts=""
+        if [[ -n "$java_bin" && -f "$java_bin" ]]; then
+            detected_cacerts="$(dirname "$(dirname "$java_bin")")/lib/security/cacerts"
+        fi
+        local java_cacerts="${jvm_cacerts:-${detected_cacerts}}"
+        if [[ -f "$java_cacerts" ]]; then
+            sudo cp "$java_cacerts" "${AM_TRUSTSTORE}"
+            sudo chown "${INSTALL_USER}:${INSTALL_USER}" "${AM_TRUSTSTORE}"
+            sudo chmod 644 "${AM_TRUSTSTORE}"
+            success "Truststore initialized from system Java cacerts"
+        else
+            error "Could not find system Java cacerts at: $java_cacerts"
+            exit 1
+        fi
+    fi
+
+    info "Importing ds-ca-cert.pem into AM truststore..."
+    keytool -delete -alias "ds-ca-cert" -keystore "${AM_TRUSTSTORE}" -storepass "${TRUSTSTORE_PASSWORD}" 2>/dev/null || true
+    keytool -importcert -file "${AM_TRUSTSTORE_FOLDER}/ds-ca-cert.pem" \
+        -keystore "${AM_TRUSTSTORE}" -storepass "${TRUSTSTORE_PASSWORD}" \
+        -alias "ds-ca-cert" -noprompt || true
+    success "DS CA cert registered in truststore at ${AM_TRUSTSTORE}"
+
+    # Export truststore properties for all subsequent child scripts (Amster, etc.)
+    export JAVA_OPTS="${JAVA_OPTS:-} -Djavax.net.ssl.trustStore=${AM_TRUSTSTORE} -Djavax.net.ssl.trustStorePassword=${TRUSTSTORE_PASSWORD}"
+    export AMSTER_OPTS="${AMSTER_OPTS:-} -Djavax.net.ssl.trustStore=${AM_TRUSTSTORE} -Djavax.net.ssl.trustStorePassword=${TRUSTSTORE_PASSWORD}"
 }
 
 # -----------------------------------------------------------------------------
@@ -89,8 +215,15 @@ function create_test_users() {
         -u "idm-provisioning:${idm_provisioning_secret}" \
         -d "grant_type=client_credentials&scope=fr:idm:*" \
         "$am_token_url" 2>/dev/null) || true
-    local access_token
-    access_token=$(echo "$token_response" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("access_token",""))' 2>/dev/null) || true
+
+    local access_token=""
+    if command -v python3 >/dev/null 2>&1; then
+        access_token=$(echo "$token_response" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("access_token",""))' 2>/dev/null || true)
+    elif command -v jq >/dev/null 2>&1; then
+        access_token=$(echo "$token_response" | jq -r '.access_token // empty' 2>/dev/null || true)
+    else
+        access_token=$(echo "$token_response" | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4 || true)
+    fi
 
     if [[ -z "$access_token" ]]; then
         warning "Could not obtain idm-provisioning token — skipping test user creation"
@@ -125,8 +258,12 @@ function create_test_users() {
 # -----------------------------------------------------------------------------
 # Configuration Mode Choice
 # -----------------------------------------------------------------------------
+preflight_checks
+check_server1_connectivity
+
 echo "Do you want to install AM with File Based Config (FBC) or DS based Config"
-read -p "Enter 1 for File Based Config (FBC) [Recommended], 2 for DS based Config: " am_config_choice
+read -p "Enter 1 for File Based Config (FBC) [Recommended], 2 for DS based Config (Default: 1): " am_config_choice
+am_config_choice="${am_config_choice:-1}"
 if [[ "$am_config_choice" == "2" ]]; then
     am_config_type="DS"
 else

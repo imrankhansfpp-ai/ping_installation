@@ -1,7 +1,13 @@
 #!/bin/bash
 
-# Load environment variables
-source ./platformconfig.env
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/platformconfig.env" ]]; then
+    source "${SCRIPT_DIR}/platformconfig.env"
+elif [[ -f "${SCRIPT_DIR}/../platformconfig.env" ]]; then
+    source "${SCRIPT_DIR}/../platformconfig.env"
+else
+    source ./platformconfig.env
+fi
 
 # Logging functions
 function info()    { echo -e "\033[1;34m[INFO]\033[0m  $*"; }

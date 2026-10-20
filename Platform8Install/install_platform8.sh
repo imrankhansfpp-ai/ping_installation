@@ -10,8 +10,13 @@ set -euo pipefail
 #              - PingGateway (IG) if desired
 ################################################################################
 
-# Load central configuration
-source ./platformconfig.env
+# Determine script directory and load configuration
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/platformconfig.env" ]]; then
+    source "${SCRIPT_DIR}/platformconfig.env"
+else
+    source ./platformconfig.env
+fi
 
 # -----------------------------------------------------------------------------
 # Logging utility functions
@@ -245,9 +250,9 @@ read -p "Enter choice [1-3] (Default: 1): " topology_choice
 topology_choice="${topology_choice:-1}"
 
 if [[ "$topology_choice" == "2" ]]; then
-    exec ./install_server1.sh
+    exec "${SCRIPT_DIR}/install_server1.sh"
 elif [[ "$topology_choice" == "3" ]]; then
-    exec ./install_server2.sh
+    exec "${SCRIPT_DIR}/install_server2.sh"
 elif [[ "$topology_choice" != "1" ]]; then
     error "Invalid choice: $topology_choice"
     exit 1
@@ -278,11 +283,11 @@ configure_ds && success "✅ Step 3 complete: DS configured"
 
 # Warning: Configuring disk thresholds for low hard disk development environments
 info "Configuring disk thresholds for development environments..."
-if [[ -x "./ds/configure_disk_thresholds.sh" ]]; then
-    ./ds/configure_disk_thresholds.sh || warning "Disk threshold configuration had issues but continuing..."
+if [[ -x "${SCRIPT_DIR}/ds/configure_disk_thresholds.sh" ]]; then
+    "${SCRIPT_DIR}/ds/configure_disk_thresholds.sh" || warning "Disk threshold configuration had issues but continuing..."
     success "✅ Disk thresholds configured for development environments"
 else
-    warning "Disk threshold script not found at ./ds/configure_disk_thresholds.sh - skipping"
+    warning "Disk threshold script not found at ${SCRIPT_DIR}/ds/configure_disk_thresholds.sh - skipping"
 fi
 echo
 

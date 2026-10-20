@@ -8,7 +8,14 @@
 #   • each instance has a description
 
 # === Configuration ===
-DS_BASE="${BASE_INSTALL_DIR:-/ping}/ds"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/platformconfig.env" ]]; then
+    source "${SCRIPT_DIR}/platformconfig.env"
+elif [[ -f "${SCRIPT_DIR}/../platformconfig.env" ]]; then
+    source "${SCRIPT_DIR}/../platformconfig.env"
+fi
+
+DS_BASE="${DS_DIR:-${BASE_INSTALL_DIR:-/ping}/ds}"
 declare -A INST_DESC=(
   ["opendj"]="Consolidated DS (All Profiles)"
   ["idrepo"]="AM/IDM Identity Store"
@@ -16,6 +23,28 @@ declare -A INST_DESC=(
   ["config"]="Config Store"
 )
 ALL_INSTANCES=("${!INST_DESC[@]}")
+
+# Helper to find instance directory
+get_instance_dir() {
+  local inst="$1"
+  if [[ "$inst" == "opendj" ]]; then
+    if [[ -d "$DS_BASE/opendj" ]]; then
+      echo "$DS_BASE/opendj"
+    elif [[ -d "$DS_BASE/opendj/opendj" ]]; then
+      echo "$DS_BASE/opendj/opendj"
+    else
+      echo "$DS_BASE/opendj"
+    fi
+  else
+    if [[ -d "$DS_BASE/$inst/opendj" ]]; then
+      echo "$DS_BASE/$inst/opendj"
+    elif [[ -d "$DS_BASE/$inst" ]]; then
+      echo "$DS_BASE/$inst"
+    else
+      echo "$DS_BASE/$inst/opendj"
+    fi
+  fi
+}
 
 # === Colours ===
 GREEN='\033[0;32m'
@@ -51,8 +80,13 @@ status_instances() {
   echo
   for inst in "${ALL_INSTANCES[@]}"; do
     local desc="${INST_DESC[$inst]}"
+    local inst_dir
+    inst_dir=$(get_instance_dir "$inst")
+    if [[ ! -d "$inst_dir" ]]; then
+      continue
+    fi
     local pids
-    pids=$(ps -ef | grep "[j]ava.*${DS_BASE}/${inst}/opendj/config" | awk '{print $2}')
+    pids=$(ps -ef | grep "[j]ava.*${inst_dir}/config" | awk '{print $2}')
     if [[ -n "$pids" ]]; then
       printf "%-25s ${GREEN}running${NC} [%s(%s)]\n" "$desc" "$inst" "$pids"
     else
@@ -76,7 +110,12 @@ control_instances() {
 
   for inst in "${ALL_INSTANCES[@]}"; do
     local desc="${INST_DESC[$inst]}"
-    local script="$DS_BASE/$inst/opendj/bin/${action}-ds"
+    local inst_dir
+    inst_dir=$(get_instance_dir "$inst")
+    if [[ ! -d "$inst_dir" ]]; then
+      continue
+    fi
+    local script="$inst_dir/bin/${action}-ds"
     if [[ -x "$script" ]]; then
       if (cd "$(dirname "$script")" && ./$(basename "$script") &>/dev/null); then
         printf "  %b%s%b  %-25s (%s)\n" "$color" "$symbol" "$NC" "$desc" "$text"

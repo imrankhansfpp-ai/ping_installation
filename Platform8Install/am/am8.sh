@@ -8,10 +8,14 @@ set -euo pipefail
 #              centralized configuration.
 ################################################################################
 
-# ==========================
-# Load environment variables
-# ==========================
-source ./platformconfig.env  # load TOMCAT_DIR, TOMCAT_WEBAPPS_DIR, AMSTER_DIR, etc.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/platformconfig.env" ]]; then
+    source "${SCRIPT_DIR}/platformconfig.env"
+elif [[ -f "${SCRIPT_DIR}/../platformconfig.env" ]]; then
+    source "${SCRIPT_DIR}/../platformconfig.env"
+else
+    source ./platformconfig.env
+fi
 
 # -----------------------------------------------------------------------------
 # Simple coloured-log functions
@@ -104,19 +108,55 @@ function clear_am() {
         return 1
     fi
 
-    info "Waiting for AM to deploy..."
-    sleep 20
-    success "AM deployment delay complete."
+    info "Waiting for AM WAR deployment to complete in Tomcat..."
+    local count=0
+    local max_wait=90
+    while [[ $count -lt $max_wait ]]; do
+        if [[ -d "${TOMCAT_WEBAPPS_DIR}/${AM_CONTEXT}/WEB-INF" ]]; then
+            success "AM WAR successfully extracted"
+            break
+        fi
+        sleep 3
+        ((count+=3))
+        if [[ $((count % 15)) -eq 0 ]]; then
+            info "Waiting for AM WAR extraction... (${count}/${max_wait}s)"
+        fi
+    done
 
     info "Current WARs in Tomcat:"
     ls -lart "${TOMCAT_WEBAPPS_DIR}/"
 
     info "Verifying Tomcat listening on port ${TOMCAT_HTTP_PORT}..."
-    if netstat -tuln | grep -q "${TOMCAT_HTTP_PORT}.*LISTEN"; then
+    if (netstat -tuln 2>/dev/null || ss -tuln 2>/dev/null) | grep -q ":${TOMCAT_HTTP_PORT} "; then
         success "Tomcat is listening on port ${TOMCAT_HTTP_PORT}."
     else
         error "Tomcat is not listening on port ${TOMCAT_HTTP_PORT}."
     fi
+}
+
+# -----------------------------------------------------------------------------
+# Function: wait_for_am_ready
+# Description: Wait until AM HTTP endpoint is actively responding
+# -----------------------------------------------------------------------------
+function wait_for_am_ready() {
+    info "Waiting for AM to be ready at ${AM_URL}..."
+    local max_wait=90
+    local count=0
+    while [[ $count -lt $max_wait ]]; do
+        local status
+        status=$(curl -s -o /dev/null -w "%{http_code}" "${AM_URL}/json/serverinfo/*" 2>/dev/null || echo "000")
+        if [[ "$status" =~ ^(200|302|404)$ ]]; then
+            # Even 302 or 404 indicates Tomcat / AM is responding and servlet is loaded
+            success "AM is responding (HTTP $status)"
+            return 0
+        fi
+        sleep 3
+        ((count+=3))
+        if [[ $((count % 15)) -eq 0 ]]; then
+            info "Still waiting for AM to respond... (${count}/${max_wait}s)"
+        fi
+    done
+    warning "AM wait timeout reached - proceeding with Amster operations anyway"
 }
 
 # ==================================================================================
@@ -137,6 +177,8 @@ function setup_amster() {
 # ========================================
 function run_amster() {
     info "Running Amster install ..."
+    export JAVA_OPTS="${JAVA_OPTS:-} -Djavax.net.ssl.trustStore=${AM_TRUSTSTORE} -Djavax.net.ssl.trustStorePassword=${TRUSTSTORE_PASSWORD}"
+    export AMSTER_OPTS="${AMSTER_OPTS:-} -Djavax.net.ssl.trustStore=${AM_TRUSTSTORE} -Djavax.net.ssl.trustStorePassword=${TRUSTSTORE_PASSWORD}"
 "${AMSTER_DIR}/amster" <<EOF
 install-openam \
   --serverUrl ${AM_URL} \
@@ -302,6 +344,8 @@ function deploy_am_envfile(){
         "${AM_ENV_FILE}" > "${AM_SETENV}" \
         && success "AM setenv.sh file is deployed to ${AM_SETENV}" \
         || error "Failed to copy ${AM_ENV_FILE}"
+    chmod +x "${AM_SETENV}" 2>/dev/null || true
+    chown "${INSTALL_USER}:${INSTALL_USER}" "${AM_SETENV}" 2>/dev/null || true
 
     success "AM deployment delay complete."
 }
@@ -314,6 +358,7 @@ stop_tomcat
 deploy_am_envfile
 start_tomcat
 clear_am
+wait_for_am_ready
 setup_amster
 run_amster
 configure_cts

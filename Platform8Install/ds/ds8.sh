@@ -8,16 +8,21 @@ set -euo pipefail
 #              configuration.
 ################################################################################
 
-# ==========================
-# Load environment variables
-# ==========================
-source ./platformconfig.env
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/platformconfig.env" ]]; then
+    source "${SCRIPT_DIR}/platformconfig.env"
+elif [[ -f "${SCRIPT_DIR}/../platformconfig.env" ]]; then
+    source "${SCRIPT_DIR}/../platformconfig.env"
+else
+    source ./platformconfig.env
+fi
 
 # -----------------------------------------------------------------------------
 # Simple coloured-log functions
 # -----------------------------------------------------------------------------
 function info()    { echo -e "\033[1;34m[INFO]\033[0m  $*"; }
 function success() { echo -e "\033[1;32m[✔]\033[0m     $*"; }
+function warning() { echo -e "\033[1;33m[⚠]\033[0m     $*"; }
 function error()   { echo -e "\033[1;31m[✖]\033[0m     $*"; }
 
 # ==========================
@@ -55,11 +60,26 @@ function kill_ds_processes() {
 function prepare_am_truststore() {
     info "Creating AM truststore..."
     sudo rm -rf "${AM_TRUSTSTORE_FOLDER}"
-    mkdir -p "${AM_TRUSTSTORE_FOLDER}"
-    sudo cp "${jvm_cacerts:-$(dirname $(dirname $(readlink $(readlink $(which javac)))))/lib/security/cacerts}" "${AM_TRUSTSTORE}"
-    sudo chown "${INSTALL_USER}:${INSTALL_USER}" "${AM_TRUSTSTORE}"
-    sudo chmod 644 "${AM_TRUSTSTORE}"
-    success "AM truststore created at ${AM_TRUSTSTORE}"
+    sudo mkdir -p "${AM_TRUSTSTORE_FOLDER}"
+    sudo chown -R "${INSTALL_USER}:${INSTALL_USER}" "${BASE_INSTALL_DIR}/${AM_CONTEXT}" 2>/dev/null || true
+
+    local java_bin
+    java_bin=$(readlink -f "$(which java 2>/dev/null || which javac 2>/dev/null)" || true)
+    local detected_cacerts=""
+    if [[ -n "$java_bin" && -f "$java_bin" ]]; then
+        detected_cacerts="$(dirname "$(dirname "$java_bin")")/lib/security/cacerts"
+    fi
+    local cacerts_path="${jvm_cacerts:-${detected_cacerts}}"
+
+    if [[ -f "$cacerts_path" ]]; then
+        sudo cp "$cacerts_path" "${AM_TRUSTSTORE}"
+        sudo chown "${INSTALL_USER}:${INSTALL_USER}" "${AM_TRUSTSTORE}"
+        sudo chmod 644 "${AM_TRUSTSTORE}"
+        success "AM truststore created at ${AM_TRUSTSTORE}"
+    else
+        error "Could not find Java cacerts file at: $cacerts_path"
+        exit 1
+    fi
 }
 
 # ========================================
@@ -135,6 +155,15 @@ function install_single_ds() {
     cp -f "${AM_TRUSTSTORE_FOLDER}/ds-ca-cert.pem" "${AM_TRUSTSTORE_FOLDER}/ds-repo-ca-cert.pem" 2>/dev/null || true
     cp -f "${AM_TRUSTSTORE_FOLDER}/ds-ca-cert.pem" "${AM_TRUSTSTORE_FOLDER}/ds-config-ca-cert.pem" 2>/dev/null || true
     cp -f "${AM_TRUSTSTORE_FOLDER}/ds-ca-cert.pem" "${AM_TRUSTSTORE_FOLDER}/ds-cts-ca-cert.pem" 2>/dev/null || true
+
+    # Convenience copies for multi-server transfer to Server 2
+    mkdir -p "${SCRIPT_DIR}/misc/keys" 2>/dev/null || true
+    cp -f "${AM_TRUSTSTORE_FOLDER}/ds-ca-cert.pem" "${SCRIPT_DIR}/misc/keys/ds-ca-cert.pem" 2>/dev/null || true
+    cp -f "${AM_TRUSTSTORE_FOLDER}/ds-ca-cert.pem" "${SCRIPT_DIR}/ds-ca-cert.pem" 2>/dev/null || true
+    info "DS CA Certificate saved to:"
+    info "  - ${AM_TRUSTSTORE_FOLDER}/ds-ca-cert.pem"
+    info "  - ${SCRIPT_DIR}/misc/keys/ds-ca-cert.pem"
+    info "  - ${SCRIPT_DIR}/ds-ca-cert.pem"
 
     success "Single Consolidated Directory Server installed at ${DS_INSTANCE_DIR}"
 }
